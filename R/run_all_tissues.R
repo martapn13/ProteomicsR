@@ -4,8 +4,6 @@
 #  Set use_halfmin = TRUE for tissues where missForest fails
 # ============================================================
 
-library(ProteomicsR)
-
 run_tissue_analysis(
   pheno_file  = "phenoAdrenals.txt",
   exprs_file  = "exprsAdrenals.txt",
