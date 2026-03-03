@@ -319,8 +319,4 @@ run_tissue_analysis <- function(pheno_file,
 
   message("\n========== Finished: ", tissue_name, " ==========\n")
   invisible(list(df122C = df122C, efit = efit, deg_list = deg_list))
-}
-
-  message("\n========== Finished: ", tissue_name, " ==========\n")
-  invisible(list(df122C = df122C, efit = efit, deg_list = deg_list))
-}
+} 
