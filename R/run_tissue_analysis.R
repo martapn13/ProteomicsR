@@ -6,13 +6,32 @@
 #' expression (limma/voom), and QC visualizations (RLE, PCA, volcano plots,
 #' heatmaps).
 #'
-#' @param pheno_file Path to the phenotype \code{.txt} file (tab-separated).
-#'   Must contain columns: \code{sampleName}, \code{Replicates}, \code{state}, \code{mouse}.
-#' @param exprs_file Path to the expression \code{.txt} file (tab-separated),
-#'   with proteins as rows and samples as columns.
+#' @param pheno_file Path to the phenotype \code{.txt} file (tab-separated). Must contain
+#'   one row per sample with the following columns:
+#'   \itemize{
+#'     \item \code{phenostate} - experimental group (e.g. "WT", "KO", "DAPA", "QC")
+#'     \item \code{sampleName} - unique sample identifier (used as row names)
+#'     \item \code{sampleQC} - sample type, either "Sample" or "QC"
+#'     \item \code{Replicates} - replicate label; matches sampleName for biological
+#'       samples and "QC" for quality control samples
+#'   }
+#'   QC samples (where \code{Replicates == "QC"}) are automatically removed before analysis.
+#' @param exprs_file Path to the expression \code{.txt} file (tab-separated). Must be
+#'   formatted as:
+#'   \itemize{
+#'     \item First column = protein identifiers as row names (e.g. UniProt IDs such as "Q9JHZ2"
+#'       or protein groups separated by semicolons such as "O88746;O88746-2")
+#'     \item Remaining columns = samples (column names must match \code{sampleName} in the pheno file)
+#'     \item Values = raw protein intensity (non-log scale, non-negative)
+#'     \item Missing values should be coded as 0
+#'     \item Includes both biological samples and quality control samples
+#'       (e.g. "Quality_control_1", "Quality_control_2")
+#'   }
+#'   Example column structure: Quality_control_1, Quality_control_2, KO_single_sample_4,
+#'   WT_single_sample_1, DAPA_single_sample_7, etc.
 #' @param tissue_name Short label used in all output file names (e.g. \code{"Adrenals"}, \code{"Liver"}).
-#' @param use_halfmin Logical. If \code{TRUE}, uses half-minimum imputation instead
-#'   of \code{missForest}. Recommended for tissues where \code{missForest} fails (e.g. Liver).
+#' @param use_halfmin Logical. If \code{TRUE}, skips missForest and uses only half-minimum
+#'   imputation. Recommended for tissues where \code{missForest} fails (e.g. Liver).
 #'   Default is \code{FALSE}.
 #' @param best_ncomp Integer. Number of surrogate variables (components) for RUViii.
 #'   Default is \code{5}.
@@ -22,29 +41,6 @@
 #'   \item{df122C}{Corrected expression matrix (proteins x samples).}
 #'   \item{efit}{The \code{eBayes} fitted model object from limma.}
 #'   \item{deg_list}{Named list of DE results: \code{KO_vs_WT}, \code{DAPA_vs_WT}, \code{KO_vs_DAPA}.}
-#' }
-#'
-#' @details
-#' The pipeline runs the following steps:
-#' \enumerate{
-#'   \item Read phenotype and expression data
-#'   \item Remove near-zero variance features (caret NZV)
-#'   \item Impute missing values (missForest or half-minimum)
-#'   \item SPECU feature ranking to identify negative controls
-#'   \item RUViii-PRPS batch correction
-#'   \item QC plots: RLE and PCA before/after correction
-#'   \item ARSyNseq noise removal (NOISeq)
-#'   \item limma/voom differential expression (KO vs WT, DAPA vs WT, KO vs DAPA)
-#'   \item Volcano plots (saved as PNG)
-#'   \item Heatmaps of top 10 DE proteins per comparison
-#' }
-#'
-#' Output CSV files written to the working directory:
-#' \itemize{
-#'   \item \code{ExprsprpsNoiseq_<tissue>.csv} — corrected expression matrix
-#'   \item \code{Res_noiseq_<tissue>.csv} — full limma results
-#'   \item \code{<tissue>_sig_KO_vs_WT.csv}, \code{<tissue>_sig_DAPA_vs_WT.csv}, \code{<tissue>_sig_KO_vs_DAPA.csv}
-#'   \item \code{volcano_<tissue>_<comparison>.png}
 #' }
 #'
 #' @author Leong Ng \email{lln1@@leicester.ac.uk} (original pipeline)
@@ -68,47 +64,49 @@ run_tissue_analysis <- function(pheno_file,
                                 use_halfmin = FALSE,
                                 best_ncomp  = 5) {
 
+  requireNamespace("ggfortify", quietly = TRUE)
+
   message("\n========== Starting analysis: ", tissue_name, " ==========\n")
 
-  # ----------------------------------------------------------
-  # 1. Read data
-  # ----------------------------------------------------------
-  pheno  <- read.table(pheno_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+  ColorBatch <- c("darkgreen", "blue", "red4", "gold1", "yellow4", "brown", "lightblue",
+                  "coral4", "maroon4", "chartreuse4",
+                  "#660099", "#CC0066", "#FF9999", "#FF9900")
+
+  # ── 1. Read data ─────────────────────────────────────────────────────────────
+  pheno <- read.table(pheno_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
   rownames(pheno) <- pheno$sampleName
   pheno1 <- pheno[!(pheno$Replicates == "QC"), ]
 
   exprs1 <- read.delim(exprs_file, row.names = 1, check.names = FALSE)
   exprs1 <- as.matrix(exprs1)
 
-  # ----------------------------------------------------------
-  # 2. Remove low-variance features (caret NZV)
-  # ----------------------------------------------------------
+  # ── 2. Remove low-variance features (caret NZV) ──────────────────────────────
   myfilt1 <- t(exprs1)
   nzv     <- caret::preProcess(myfilt1, method = "nzv", uniqueCut = 10)
   myfilt2 <- t(predict(nzv, myfilt1))
   message("Dimensions after NZV filter: ", nrow(myfilt2), " x ", ncol(myfilt2))
+  message("Min value after NZV filter: ", min(myfilt2))
 
-  # ----------------------------------------------------------
-  # 3. Imputation
-  # ----------------------------------------------------------
-  # Always apply half-minimum first (as in original pipeline)
-df12  <- as.matrix(myfilt2)
-df12T <- as.data.frame(t(df12))
-cols  <- 1:ncol(df12T)
-df12T[cols] <- lapply(df12T[cols], function(x)
-  replace(x, x == 0, min(x[x > 0], na.rm = TRUE) / 2))
-df122 <- t(df12T)
+  # ── 3. Imputation ─────────────────────────────────────────────────────────────
+  # Half-minimum always runs first
+  df12  <- as.matrix(myfilt2)
+  df12T <- as.data.frame(t(df12))
+  cols  <- 1:ncol(df12T)
+  df12T[cols] <- lapply(df12T[cols], function(x)
+    replace(x, x == 0, min(x[x > 0], na.rm = TRUE) / 2))
+  df122 <- t(df12T)
+  message("Min value after half-min: ", min(df122))
+  hist(log2(df122), main = paste("log2 intensity -", tissue_name))
 
-if (!use_halfmin) {
-  message("Using missForest imputation for: ", tissue_name)
-  df122 <- t(missForest::missForest(t(df122))$ximp)
-} else {
-  message("Using half-minimum imputation for: ", tissue_name)
-}
+  if (!use_halfmin) {
+    message("Using missForest imputation for: ", tissue_name)
+    df122 <- t(missForest::missForest(t(df122))$ximp)
+    message("Min value after missForest: ", min(df122))
+  } else {
+    message("Using half-minimum imputation only for: ", tissue_name)
+  }
 
-  # ----------------------------------------------------------
-  # 4. SPECU feature ranking (for negative controls)
-  # ----------------------------------------------------------
+  # ── 4. SPECU feature ranking ──────────────────────────────────────────────────
   X    <- t(df122)
   out1 <- Rdimtools::do.specu(X, ndim = ncol(X) * 1, sigma = 5,
                               preprocess = "cscale", ranking = "method1")
@@ -121,14 +119,11 @@ if (!use_halfmin) {
   rownames(Ordered) <- Ordered$Peakorder
   Ordered$ordrow    <- 1:nrow(Ordered)
 
-  # Bottom 25% as negative controls
   NumAll  <- nrow(Ordered)
   NumPeak <- as.integer(nrow(Ordered) * 0.75)
   NegC    <- Ordered[c(NumPeak:NumAll), ]
 
-  # ----------------------------------------------------------
-  # 5. RUViii-PRPS batch correction
-  # ----------------------------------------------------------
+  # ── 5. RUViii-PRPS batch correction ──────────────────────────────────────────
   df120 <- log2(df122[, rownames(pheno)])
   M100  <- SummarizedExperiment::SummarizedExperiment(
     assays  = list(raw = df120),
@@ -148,7 +143,7 @@ if (!use_halfmin) {
   ncg.set1 <- rownames(raw.data1) %in% NegC$Peakorder
   message("Negative control features: ", sum(ncg.set1))
 
-  df10       <- tcgaCleaneR::runRUV_III_PRPS(
+  df10 <- tcgaCleaneR::runRUV_III_PRPS(
     ruv.data    = t(raw.data1),
     ruv.rep     = ReplicateMatrix1,
     ncg.set     = ncg.set1,
@@ -157,43 +152,33 @@ if (!use_halfmin) {
   )
   ruv.iii.10 <- t(df10$new.ruv.data)
 
-  # ----------------------------------------------------------
-  # 6. QC plots: RLE and PCA (before / after correction)
-  # ----------------------------------------------------------
-  ColorBatch <- c("darkgreen", "blue", "red4", "gold1", "yellow4", "brown", "lightblue",
-                  "coral4", "maroon4", "chartreuse4",
-                  "#660099", "#CC0066", "#FF9999", "#FF9900")
-
+  # ── 6. QC plots: RLE and PCA ──────────────────────────────────────────────────
   print(
     ruv::ruv_rle(Y = t(raw.data1), ylim = c(-3, 3), rowinfo = pheno) +
       ggplot2::geom_point(ggplot2::aes(x = rle.x.factor, y = middle, colour = state)) +
       ggplot2::theme(legend.position = "bottom") +
+      ggplot2::labs(colour = "state") +
       ggplot2::scale_color_manual(values = ColorBatch) +
-      ggplot2::geom_hline(yintercept = 0, linetype = "dotted", colour = "cyan") +
-      ggplot2::ggtitle(paste("RLE before correction -", tissue_name))
+      ggplot2::geom_hline(yintercept = 0, linetype = "dotted", colour = "cyan")
   )
   print(
     ruv::ruv_rle(Y = t(ruv.iii.10), ylim = c(-3, 3), rowinfo = pheno) +
       ggplot2::geom_point(ggplot2::aes(x = rle.x.factor, y = middle, colour = state)) +
       ggplot2::theme(legend.position = "bottom") +
+      ggplot2::labs(colour = "state") +
       ggplot2::scale_color_manual(values = ColorBatch) +
-      ggplot2::geom_hline(yintercept = 0, linetype = "dotted", colour = "cyan") +
-      ggplot2::ggtitle(paste("RLE after RUViii -", tissue_name))
+      ggplot2::geom_hline(yintercept = 0, linetype = "dotted", colour = "cyan")
   )
 
-  pca_raw <- prcomp(t(as.matrix(raw.data1)), scale = TRUE)
-  print(ggfortify::autoplot(pca_raw, data = pheno, colour = "state") +
-          ggplot2::scale_colour_manual(values = rainbow(4)) +
-          ggplot2::ggtitle(paste("PCA raw -", tissue_name)))
+  pca_res <- prcomp(t(as.matrix(raw.data1)), scale = TRUE)
+  print(autoplot(pca_res, data = pheno, colour = "state") +
+          ggplot2::scale_colour_manual(values = rainbow(4)))
 
-  pca_ruv <- prcomp(t(as.matrix(ruv.iii.10)), scale = TRUE)
-  print(ggfortify::autoplot(pca_ruv, data = pheno, colour = "state") +
-          ggplot2::scale_colour_manual(values = rainbow(4)) +
-          ggplot2::ggtitle(paste("PCA after RUViii -", tissue_name)))
+  pca_res1 <- prcomp(t(as.matrix(ruv.iii.10)), scale = TRUE)
+  print(autoplot(pca_res1, data = pheno, colour = "state") +
+          ggplot2::scale_colour_manual(values = rainbow(4)))
 
-  # ----------------------------------------------------------
-  # 7. NOISeq / ARSyNseq
-  # ----------------------------------------------------------
+  # ── 7. NOISeq / ARSyNseq ─────────────────────────────────────────────────────
   metadataB  <- data.frame(labelDescription = colnames(pheno))
   phenoDataB <- new("AnnotatedDataFrame", data = pheno, varMetadata = metadataB)
   mydata2    <- Biobase::ExpressionSet(assayData = ruv.iii.10, phenoData = phenoDataB)
@@ -204,23 +189,20 @@ if (!use_halfmin) {
 
   write.csv(df122C, file = paste0("ExprsprpsNoiseq_", tissue_name, ".csv"))
 
+  pca_res2 <- prcomp(t(log2(df122C)), scale = TRUE)
+  print(autoplot(pca_res2, data = pheno, colour = "state") +
+          ggplot2::scale_colour_manual(values = rainbow(4)))
+
   print(
     ruv::ruv_rle(Y = t(log2(df122C)), ylim = c(-3, 3), rowinfo = pheno) +
       ggplot2::geom_point(ggplot2::aes(x = rle.x.factor, y = middle, colour = state)) +
       ggplot2::theme(legend.position = "bottom") +
+      ggplot2::labs(colour = "state") +
       ggplot2::scale_color_manual(values = ColorBatch) +
-      ggplot2::geom_hline(yintercept = 0, linetype = "dotted", colour = "cyan") +
-      ggplot2::ggtitle(paste("RLE after ARSyNseq -", tissue_name))
+      ggplot2::geom_hline(yintercept = 0, linetype = "dotted", colour = "cyan")
   )
 
-  pca_final <- prcomp(t(log2(df122C)), scale = TRUE)
-  print(ggfortify::autoplot(pca_final, data = pheno, colour = "state") +
-          ggplot2::scale_colour_manual(values = rainbow(4)) +
-          ggplot2::ggtitle(paste("PCA final -", tissue_name)))
-
-  # ----------------------------------------------------------
-  # 8. limma differential expression
-  # ----------------------------------------------------------
+  # ── 8. limma differential expression ─────────────────────────────────────────
   state  <- factor(pheno1$state, levels = c("WT", "KO", "DAPA"))
   mouse  <- factor(pheno1$Replicates)
 
@@ -239,13 +221,14 @@ if (!use_halfmin) {
   vfit   <- limma::contrasts.fit(vfit, contrasts = contrast.matrix)
   efit   <- limma::eBayes(vfit, robust = TRUE)
 
-  limma::plotSA(efit, main = paste("Mean-variance trend -", tissue_name))
+  limma::plotSA(vfit, main = " model: Mean-variance trend")
+  limma::plotSA(efit, main = "Final model: Mean-variance trend")
 
   dt5 <- limma::decideTests(efit, p.value = 0.05, lfc = log2(1.5))
   summary(dt5)
   limma::write.fit(efit, results = dt5,
-                   file   = paste0("Res_noiseq_", tissue_name, ".csv"),
-                   digits = NULL, adjust = "BH", method = "separate",
+                   file     = paste0("Res_noiseq_", tissue_name, ".csv"),
+                   digits   = NULL, adjust = "BH", method = "separate",
                    F.adjust = "BH", quote = TRUE, sep = ",", row.names = TRUE)
 
   deg_KO_vs_WT   <- limma::topTable(efit, coef = "KO - WT",   adjust.method = "fdr", number = Inf)
@@ -266,9 +249,7 @@ if (!use_halfmin) {
   write.csv(sig_DAPA_vs_WT, paste0(tissue_name, "_sig_DAPA_vs_WT.csv"), row.names = TRUE)
   write.csv(sig_KO_vs_DAPA, paste0(tissue_name, "_sig_KO_vs_DAPA.csv"), row.names = TRUE)
 
-  # ----------------------------------------------------------
-  # 9. Volcano plots
-  # ----------------------------------------------------------
+  # ── 9. Volcano plots ──────────────────────────────────────────────────────────
   deg_list <- list(KO_vs_WT   = deg_KO_vs_WT,
                    DAPA_vs_WT = deg_DAPA_vs_WT,
                    KO_vs_DAPA = deg_KO_vs_DAPA)
@@ -291,8 +272,8 @@ if (!use_halfmin) {
                     x     = expression(Log[2] ~ Fold ~ Change),
                     y     = expression(-Log[10] ~ adj.P ~ value)) +
       ggplot2::theme_minimal() +
-      ggplot2::theme(plot.title    = ggplot2::element_text(hjust = 0.5, face = "bold"),
-                     legend.title  = ggplot2::element_blank())
+      ggplot2::theme(plot.title   = ggplot2::element_text(hjust = 0.5, face = "bold"),
+                     legend.title = ggplot2::element_blank())
 
     ggplot2::ggsave(paste0("volcano_", tissue_name, "_", name, ".png"),
                     plot = p, width = 10, height = 8, dpi = 300)
@@ -303,9 +284,7 @@ if (!use_halfmin) {
             sum(df$adj.P.Val < FDR_threshold & df$logFC < -logFC_threshold), " down")
   }
 
-  # ----------------------------------------------------------
-  # 10. Heatmaps (top 10 DE proteins per comparison)
-  # ----------------------------------------------------------
+  # ── 10. Heatmaps ──────────────────────────────────────────────────────────────
   expr_mat <- df122C
   qc_cols  <- grep("Quality_control", colnames(expr_mat), value = TRUE)
   if (length(qc_cols) > 0) expr_mat <- expr_mat[, !colnames(expr_mat) %in% qc_cols, drop = FALSE]
@@ -337,6 +316,10 @@ if (!use_halfmin) {
       main           = paste("Top 10 DE proteins:", tissue_name, "-", comp)
     )
   }
+
+  message("\n========== Finished: ", tissue_name, " ==========\n")
+  invisible(list(df122C = df122C, efit = efit, deg_list = deg_list))
+}
 
   message("\n========== Finished: ", tissue_name, " ==========\n")
   invisible(list(df122C = df122C, efit = efit, deg_list = deg_list))
