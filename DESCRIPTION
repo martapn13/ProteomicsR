@@ -1,0 +1,40 @@
+Package: ProteomicsR
+Title: Multi-Organ Proteomics Analysis Pipeline
+Version: 0.1.0
+Authors@R: 
+    person("Leong", "Ng", email = "lln1@leicester.ac.uk", role = c("aut")),
+    person("Marta", "Nascimento", email = "marta.parente.nascimento@outlook.com", role = c("aut", "cre"))
+Description: A multi-organ proteomics analysis pipeline supporting imputation
+    (missForest or half-minimum), batch correction via RUViii-PRPS, differential
+    expression with limma/voom, and QC visualizations including RLE plots, PCA,
+    volcano plots, and heatmaps.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+biocViews: Proteomics, DifferentialExpression, Normalization, BatchEffect
+Imports:
+    ggplot2 (>= 3.4.0),
+    limma (>= 3.54.0),
+    edgeR (>= 3.40.0),
+    NOISeq,
+    missForest,
+    caret,
+    doParallel,
+    Rdimtools,
+    SummarizedExperiment,
+    RUVSeq,
+    ruv,
+    ggfortify,
+    pheatmap
+Suggests:
+    BiocManager,
+    tcgaCleaneR,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+URL: https://github.com/martapn13/ProteomicsR
+BugReports: https://github.com/martapn13/ProteomicsR/issues
+
