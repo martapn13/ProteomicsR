@@ -91,21 +91,20 @@ run_tissue_analysis <- function(pheno_file,
   # ----------------------------------------------------------
   # 3. Imputation
   # ----------------------------------------------------------
-  if (use_halfmin) {
-    message("Using half-minimum imputation for: ", tissue_name)
-    df12  <- as.matrix(myfilt2)
-    df12T <- as.data.frame(t(df12))
-    cols  <- 1:ncol(df12T)
-    df12T[cols] <- lapply(df12T[cols], function(x)
-      replace(x, x == 0, min(x[x > 0], na.rm = TRUE) / 2))
-    df122 <- t(df12T)
-  } else {
-    message("Using missForest imputation for: ", tissue_name)
-    df122 <- t(missForest::missForest(t(myfilt2))$ximp)
-  }
+  # Always apply half-minimum first (as in original pipeline)
+df12  <- as.matrix(myfilt2)
+df12T <- as.data.frame(t(df12))
+cols  <- 1:ncol(df12T)
+df12T[cols] <- lapply(df12T[cols], function(x)
+  replace(x, x == 0, min(x[x > 0], na.rm = TRUE) / 2))
+df122 <- t(df12T)
 
-  message("Min value after imputation: ", min(df122))
-  hist(log2(df122), main = paste("log2 intensity -", tissue_name))
+if (!use_halfmin) {
+  message("Using missForest imputation for: ", tissue_name)
+  df122 <- t(missForest::missForest(t(df122))$ximp)
+} else {
+  message("Using half-minimum imputation for: ", tissue_name)
+}
 
   # ----------------------------------------------------------
   # 4. SPECU feature ranking (for negative controls)
