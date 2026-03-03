@@ -15,4 +15,5 @@ importFrom(ggplot2, aes, element_blank, element_text, geom_hline, geom_point, ge
 importFrom(limma, eBayes, contrasts.fit, duplicateCorrelation, lmFit, makeContrasts, plotSA, topTable, voom, write.fit, decideTests)
 importFrom(missForest, missForest)
 importFrom(pheatmap, pheatmap)
-importFrom(ruv, ruv_rle, runRUV_III_PRPS)
+importFrom(ruv, ruv_rle)
+importFrom(tcgaCleaneR, runRUV_III_PRPS)
