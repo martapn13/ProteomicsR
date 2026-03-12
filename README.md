@@ -92,7 +92,7 @@ MIT
 | Package | Source |
 |---|---|
 | limma, edgeR, NOISeq, RUVSeq, SummarizedExperiment | Bioconductor |
-| missForest, caret, doParallel, ggplot2, ggfortify, pheatmap, Rdimtools, ruv | CRAN |
+| caret, doParallel, ggplot2, ggfortify, pheatmap, Rdimtools, ruv | CRAN |
 | tcgaCleaneR | GitHub |
 
 ## License
