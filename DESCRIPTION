@@ -5,7 +5,7 @@ Authors@R: c(
     person("Leong", "Ng", email = "lln1@leicester.ac.uk", role = "aut"),
     person("Marta", "Nascimento", email = "marta.parente.nascimento@outlook.com", role = c("aut", "cre")))
 Description: A multi-organ proteomics analysis pipeline supporting imputation
-    (missForest or half-minimum), batch correction via RUViii-PRPS, differential
+    (half-minimum), batch correction via RUViii-PRPS, differential
     expression with limma/voom, and QC visualizations including RLE plots, PCA,
     volcano plots, and heatmaps.
 License: MIT + file LICENSE
