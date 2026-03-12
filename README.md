@@ -60,7 +60,7 @@ run_plasma_analysis(
 
 1. **Data loading** — phenotype and expression matrices
 2. **NZV filtering** — removes near-zero variance features
-3. **Imputation** — half-minimum followed by missForest (default) or half-minimum only (`use_halfmin = TRUE`)
+3. **Imputation** — half-minimum of zero values
 4. **SPECU ranking** — identifies negative control features
 5. **RUViii-PRPS** — batch correction using replicate samples (tissue only)
 6. **ARSyNseq** — additional noise removal
