@@ -43,17 +43,7 @@ setwd("path/to/your/data")
 run_tissue_analysis(
   pheno_file  = "phenoAdrenals.txt",
   exprs_file  = "exprsAdrenals.txt",
-  tissue_name = "Adrenals",
-  use_halfmin = FALSE,
-  best_ncomp  = 5
-)
-
-# For Liver use half-minimum imputation
-run_tissue_analysis(
-  pheno_file  = "phenoLiver.txt",
-  exprs_file  = "exprsLiver.txt",
-  tissue_name = "Liver",
-  use_halfmin = TRUE
+  tissue_name = "Adrenals"
 )
 ```
 
