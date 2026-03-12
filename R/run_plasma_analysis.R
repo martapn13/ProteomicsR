@@ -3,8 +3,8 @@
 #' @description
 #' Runs a full proteomics analysis pipeline for plasma samples, including
 #' filtering, half-minimum imputation, ARSyNseq normalisation, differential
-#' expression (limma/voom), ID mapping, volcano plots, and heatmaps.
-#' Note: plasma uses half-minimum imputation only (no missForest, no RUViii-PRPS).
+#' expression (limma/voom), RLE and PCA plots, volcano plots, heatmaps,
+#' and protein ID mapping. Note: plasma does not use RUViii-PRPS batch correction.
 #'
 #' @param pheno_file Path to the phenotype \code{.txt} file (tab-separated). Must contain
 #'   one row per sample with the following columns:
