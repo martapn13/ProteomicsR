@@ -1,6 +1,6 @@
 # ProteomicsR
 
-An R pipeline for multi-organ proteomics analysis, including imputation, batch correction (RUViii-PRPS), differential expression (limma/voom), and QC visualizations.
+An R pipeline for multi-organ proteomics analysis, including imputation, batch correction (RUViii-PRPS), differential expression (limma/voom), and plot visualizations.
 
 Original pipeline by Leong Ng. Modified and packaged by Marta Nascimento.
 
