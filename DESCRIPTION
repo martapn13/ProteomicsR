@@ -19,7 +19,6 @@ Imports:
     limma (>= 3.54.0),
     edgeR (>= 3.40.0),
     NOISeq,
-    missForest,
     caret,
     doParallel,
     Rdimtools,
