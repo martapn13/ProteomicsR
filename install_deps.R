@@ -1,5 +1,4 @@
-# install_deps.R
-# Run this script once to install all dependencies before using myProteomicsR
+# Run this script once to install all dependencies before using ProteomicsR
 
 if (!requireNamespace("BiocManager", quietly = TRUE))
   install.packages("BiocManager")
@@ -11,7 +10,11 @@ BiocManager::install(c(
   "NOISeq",
   "RUVSeq",
   "SummarizedExperiment",
-  "Biobase"
+  "Biobase",
+  "BiocSingular",
+  "ComplexHeatmap",
+  "BiocParallel",
+  "DelayedArray"
 ), ask = FALSE)
 
 # CRAN packages
@@ -23,13 +26,11 @@ install.packages(c(
   "ggfortify",
   "pheatmap",
   "Rdimtools",
-  "ruv"
+  "ruv",
+  "remotes"
 ))
 
 # GitHub-only packages
-if (!requireNamespace("remotes", quietly = TRUE))
-  install.packages("remotes")
-
-remotes::install_github("martapn13/tcgaCleaneR")
+remotes::install_github("AbhishekSinha28/tcgaCleaneR")
 
 message("All dependencies installed successfully!")
