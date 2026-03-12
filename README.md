@@ -38,7 +38,6 @@ remotes::install_github("martapn13/ProteomicsR")
 ```r
 library(ProteomicsR)
 
-setwd("path/to/your/data")
 
 run_tissue_analysis(
   pheno_file  = "phenoAdrenals.txt",
