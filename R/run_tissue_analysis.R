@@ -3,8 +3,11 @@
 #' @description
 #' Runs a full proteomics analysis pipeline for a single tissue, including
 #' filtering, half-minimum imputation, batch correction (RUViii-PRPS),
-#' ARSyNseq normalisation, differential expression (limma/voom), RLE and PCA
-#' plots, volcano plots, and heatmaps.
+#' differential expression (limma/voom), QC visualizations (RLE, PCA,
+#' volcano plots, heatmaps), and UniProt-to-MGI symbol conversion via biomaRt.
+#' Row names may be single UniProt accessions (e.g. "Q9JHZ2") or protein groups
+#' with isoforms separated by semicolons (e.g. "O88746;O88746-2"); the first
+#' accession in each group is used for MGI symbol mapping.
 #'
 #' @param pheno_file Path to the phenotype \code{.txt} file (tab-separated). Must contain
 #'   one row per sample with the following columns:
@@ -38,6 +41,9 @@
 #'   \item{df122C}{Corrected expression matrix (proteins x samples).}
 #'   \item{efit}{The \code{eBayes} fitted model object from limma.}
 #'   \item{deg_list}{Named list of DE results: \code{KO_vs_WT}, \code{DAPA_vs_WT}, \code{KO_vs_DAPA}.}
+#'   \item{sig_KO_vs_WT_MGI}{Significant DE proteins for KO vs WT with MGI symbols.}
+#'   \item{sig_DAPA_vs_WT_MGI}{Significant DE proteins for DAPA vs WT with MGI symbols.}
+#'   \item{sig_KO_vs_DAPA_MGI}{Significant DE proteins for KO vs DAPA with MGI symbols.}
 #' }
 #'
 #' @author Leong Ng \email{lln1@@leicester.ac.uk} (original pipeline)
@@ -235,7 +241,62 @@ run_tissue_analysis <- function(pheno_file,
   write.csv(sig_DAPA_vs_WT, paste0(tissue_name, "_sig_DAPA_vs_WT.csv"), row.names = TRUE)
   write.csv(sig_KO_vs_DAPA, paste0(tissue_name, "_sig_KO_vs_DAPA.csv"), row.names = TRUE)
 
-  # ── 9. Volcano plots ──────────────────────────────────────────────────────────
+  # ── 9. UniProt to MGI symbol conversion ──────────────────────────────────────
+  # Row names may be single UniProt accessions (e.g. "Q9JHZ2") or protein groups
+  # with isoforms separated by semicolons (e.g. "O88746;O88746-2"). The first
+  # accession is extracted and isoform suffixes are stripped before querying.
+  # Output tables contain both MGI_symbol and UniProt columns; where no MGI
+  # symbol could be matched, the UniProt accession is used as fallback label.
+
+  message("Converting UniProt accessions to MGI symbols via biomaRt...")
+
+  mart <- biomaRt::useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+
+  get_mgi_mapping <- function(ids, mart) {
+    clean_ids <- gsub("-[0-9]+$", "", sapply(strsplit(ids, ";"), `[`, 1))
+    mapping   <- biomaRt::getBM(
+      attributes = c("uniprotswissprot", "mgi_symbol"),
+      filters    = "uniprotswissprot",
+      values     = unique(clean_ids),
+      mart       = mart
+    )
+    mgi_vec <- mapping$mgi_symbol[match(clean_ids, mapping$uniprotswissprot)]
+    mgi_vec <- ifelse(is.na(mgi_vec) | mgi_vec == "", NA_character_, mgi_vec)
+    list(clean_ids = clean_ids, mgi_vec = mgi_vec)
+  }
+
+  add_MGI_columns <- function(sig_df, mart, out_prefix = "sig") {
+    raw_ids        <- rownames(sig_df)
+    res            <- get_mgi_mapping(raw_ids, mart)
+    matched        <- sum(!is.na(res$mgi_vec))
+    total          <- length(res$mgi_vec)
+    message(sprintf("%s: MGI symbols matched %d / %d (%.1f%%)",
+                    out_prefix, matched, total, 100 * matched / total))
+    sig_out              <- sig_df
+    sig_out$MGI_symbol   <- res$mgi_vec
+    sig_out$UniProt      <- res$clean_ids
+    # MGI_symbol first, UniProt second, then rest
+    other_cols <- setdiff(colnames(sig_out), c("MGI_symbol", "UniProt"))
+    sig_out    <- sig_out[, c("MGI_symbol", "UniProt", other_cols), drop = FALSE]
+    return(sig_out)
+  }
+
+  sig_KO_vs_WT_MGI   <- add_MGI_columns(sig_KO_vs_WT,   mart, out_prefix = paste0(tissue_name, "_KO_vs_WT"))
+  sig_DAPA_vs_WT_MGI <- add_MGI_columns(sig_DAPA_vs_WT, mart, out_prefix = paste0(tissue_name, "_DAPA_vs_WT"))
+  sig_KO_vs_DAPA_MGI <- add_MGI_columns(sig_KO_vs_DAPA, mart, out_prefix = paste0(tissue_name, "_KO_vs_DAPA"))
+
+  write.csv(sig_KO_vs_WT_MGI,   paste0(tissue_name, "_sig_KO_vs_WT_MGI.csv"),   row.names = FALSE)
+  write.csv(sig_DAPA_vs_WT_MGI, paste0(tissue_name, "_sig_DAPA_vs_WT_MGI.csv"), row.names = FALSE)
+  write.csv(sig_KO_vs_DAPA_MGI, paste0(tissue_name, "_sig_KO_vs_DAPA_MGI.csv"), row.names = FALSE)
+
+  # Build a global UniProt -> display label lookup for the whole expression matrix
+  # Use MGI symbol where available, fall back to UniProt accession
+  all_ids   <- rownames(df122C)
+  all_res   <- get_mgi_mapping(all_ids, mart)
+  label_map <- ifelse(!is.na(all_res$mgi_vec), all_res$mgi_vec, all_res$clean_ids)
+  names(label_map) <- all_ids
+
+  # ── 10. Volcano plots ─────────────────────────────────────────────────────────
   deg_list <- list(KO_vs_WT   = deg_KO_vs_WT,
                    DAPA_vs_WT = deg_DAPA_vs_WT,
                    KO_vs_DAPA = deg_KO_vs_DAPA)
@@ -270,7 +331,7 @@ run_tissue_analysis <- function(pheno_file,
             sum(df$adj.P.Val < FDR_threshold & df$logFC < -logFC_threshold), " down")
   }
 
-  # ── 10. Heatmaps ──────────────────────────────────────────────────────────────
+  # ── 11. Heatmaps (with MGI symbol labels, UniProt fallback) ───────────────────
   expr_mat <- df122C
   qc_cols  <- grep("Quality_control", colnames(expr_mat), value = TRUE)
   if (length(qc_cols) > 0) expr_mat <- expr_mat[, !colnames(expr_mat) %in% qc_cols, drop = FALSE]
@@ -292,6 +353,9 @@ run_tissue_analysis <- function(pheno_file,
     mat       <- expr_mat[topP, , drop = FALSE]
     col_order <- rownames(pheno1_h)[order(pheno1_h$state)]
 
+    # Replace row names with MGI symbols (UniProt fallback for NAs)
+    rownames(mat) <- label_map[rownames(mat)]
+
     pheatmap::pheatmap(
       t(scale(t(mat[, col_order, drop = FALSE]))),
       annotation_col = annotation_col[col_order, , drop = FALSE],
@@ -304,5 +368,10 @@ run_tissue_analysis <- function(pheno_file,
   }
 
   message("\n========== Finished: ", tissue_name, " ==========\n")
-  invisible(list(df122C = df122C, efit = efit, deg_list = deg_list))
+  invisible(list(df122C             = df122C,
+                 efit               = efit,
+                 deg_list           = deg_list,
+                 sig_KO_vs_WT_MGI   = sig_KO_vs_WT_MGI,
+                 sig_DAPA_vs_WT_MGI = sig_DAPA_vs_WT_MGI,
+                 sig_KO_vs_DAPA_MGI = sig_KO_vs_DAPA_MGI))
 }
