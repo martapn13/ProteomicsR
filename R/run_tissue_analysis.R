@@ -241,60 +241,86 @@ run_tissue_analysis <- function(pheno_file,
   write.csv(sig_DAPA_vs_WT, paste0(tissue_name, "_sig_DAPA_vs_WT.csv"), row.names = TRUE)
   write.csv(sig_KO_vs_DAPA, paste0(tissue_name, "_sig_KO_vs_DAPA.csv"), row.names = TRUE)
 
-  # ── 9. UniProt to MGI symbol conversion ──────────────────────────────────────
-  # Row names may be single UniProt accessions (e.g. "Q9JHZ2") or protein groups
-  # with isoforms separated by semicolons (e.g. "O88746;O88746-2"). The first
-  # accession is extracted and isoform suffixes are stripped before querying.
-  # Output tables contain both MGI_symbol and UniProt columns; where no MGI
-  # symbol could be matched, the UniProt accession is used as fallback label.
+  # ── 9. UniProt to gene symbol conversion (DEPs only) ─────────────────────────
+  # Uses org.Mm.eg.db first (local, fast). For unmatched IDs, falls back to
+  # UniProt.ws which queries UniProt directly (requires internet).
+  # Only applied to significant DEPs — not the full expression matrix.
+  # Final fallback for truly unmappable IDs is the UniProt accession itself.
 
-  message("Converting UniProt accessions to MGI symbols via biomaRt...")
+  message("Converting UniProt accessions to gene symbols for DEPs...")
 
-  mart <- biomaRt::useMart("ensembl", dataset = "mmusculus_gene_ensembl")
-
-  get_mgi_mapping <- function(ids, mart) {
-    clean_ids <- gsub("-[0-9]+$", "", sapply(strsplit(ids, ";"), `[`, 1))
-    mapping   <- biomaRt::getBM(
-      attributes = c("uniprotswissprot", "mgi_symbol"),
-      filters    = "uniprotswissprot",
-      values     = unique(clean_ids),
-      mart       = mart
-    )
-    mgi_vec <- mapping$mgi_symbol[match(clean_ids, mapping$uniprotswissprot)]
-    mgi_vec <- ifelse(is.na(mgi_vec) | mgi_vec == "", NA_character_, mgi_vec)
-    list(clean_ids = clean_ids, mgi_vec = mgi_vec)
+  clean_uniprot <- function(ids) {
+    ids <- gsub("-[0-9]+$", "", sapply(strsplit(as.character(ids), ";|,"), `[`, 1))
+    trimws(ids)
   }
 
-  add_MGI_columns <- function(sig_df, mart, out_prefix = "sig") {
-    raw_ids        <- rownames(sig_df)
-    res            <- get_mgi_mapping(raw_ids, mart)
-    matched        <- sum(!is.na(res$mgi_vec))
-    total          <- length(res$mgi_vec)
-    message(sprintf("%s: MGI symbols matched %d / %d (%.1f%%)",
-                    out_prefix, matched, total, 100 * matched / total))
-    sig_out              <- sig_df
-    sig_out$MGI_symbol   <- res$mgi_vec
-    sig_out$UniProt      <- res$clean_ids
-    # MGI_symbol first, UniProt second, then rest
-    other_cols <- setdiff(colnames(sig_out), c("MGI_symbol", "UniProt"))
-    sig_out    <- sig_out[, c("MGI_symbol", "UniProt", other_cols), drop = FALSE]
+  map_to_symbols <- function(ids) {
+    clean_ids <- clean_uniprot(ids)
+
+    # Step 1: org.Mm.eg.db (local)
+    mapped <- suppressMessages(
+      AnnotationDbi::mapIds(org.Mm.eg.db::org.Mm.eg.db,
+                            keys      = clean_ids,
+                            column    = "SYMBOL",
+                            keytype   = "UNIPROT",
+                            multiVals = "first")
+    )
+    symbols <- as.character(mapped)
+
+    # Step 2: UniProt.ws fallback for unmatched
+    still_missing <- is.na(symbols) | symbols == "NA"
+    if (any(still_missing)) {
+      message(sprintf("Trying UniProt.ws for %d unmatched IDs...", sum(still_missing)))
+      tryCatch({
+        up      <- UniProt.ws::UniProt.ws(taxId = 10090)
+        missing <- unique(clean_ids[still_missing])
+        result  <- UniProt.ws::select(up,
+                                      keys    = missing,
+                                      columns = c("gene_primary"),
+                                      keytype = "UniProtKB")
+        colnames(result) <- c("uniprot", "symbol")
+        fallback <- result$symbol[match(clean_ids[still_missing], result$uniprot)]
+        symbols[still_missing] <- ifelse(is.na(fallback) | fallback == "",
+                                         clean_ids[still_missing],
+                                         fallback)
+      }, error = function(e) {
+        message("UniProt.ws failed, using UniProt accessions as fallback: ", e$message)
+        symbols[still_missing] <<- clean_ids[still_missing]
+      })
+    }
+
+    # Step 3: final fallback — use UniProt accession
+    symbols <- ifelse(is.na(symbols) | symbols == "NA", clean_ids, symbols)
+
+    matched <- sum(symbols != clean_ids)
+    message(sprintf("Gene symbols matched %d / %d (%.1f%%)",
+                    matched, length(ids), 100 * matched / length(ids)))
+    list(clean_ids = clean_ids, symbols = symbols)
+  }
+
+  add_gene_columns <- function(sig_df, out_prefix = "sig") {
+    if (nrow(sig_df) == 0) {
+      sig_df$GeneName <- character(0)
+      sig_df$UniProt  <- character(0)
+      return(sig_df)
+    }
+    raw_ids <- rownames(sig_df)
+    res     <- map_to_symbols(raw_ids)
+    sig_out           <- sig_df
+    sig_out$GeneName  <- res$symbols
+    sig_out$UniProt   <- res$clean_ids
+    other_cols <- setdiff(colnames(sig_out), c("GeneName", "UniProt"))
+    sig_out    <- sig_out[, c("GeneName", "UniProt", other_cols), drop = FALSE]
     return(sig_out)
   }
 
-  sig_KO_vs_WT_MGI   <- add_MGI_columns(sig_KO_vs_WT,   mart, out_prefix = paste0(tissue_name, "_KO_vs_WT"))
-  sig_DAPA_vs_WT_MGI <- add_MGI_columns(sig_DAPA_vs_WT, mart, out_prefix = paste0(tissue_name, "_DAPA_vs_WT"))
-  sig_KO_vs_DAPA_MGI <- add_MGI_columns(sig_KO_vs_DAPA, mart, out_prefix = paste0(tissue_name, "_KO_vs_DAPA"))
+  sig_KO_vs_WT_MGI   <- add_gene_columns(sig_KO_vs_WT,   out_prefix = paste0(tissue_name, "_KO_vs_WT"))
+  sig_DAPA_vs_WT_MGI <- add_gene_columns(sig_DAPA_vs_WT, out_prefix = paste0(tissue_name, "_DAPA_vs_WT"))
+  sig_KO_vs_DAPA_MGI <- add_gene_columns(sig_KO_vs_DAPA, out_prefix = paste0(tissue_name, "_KO_vs_DAPA"))
 
   write.csv(sig_KO_vs_WT_MGI,   paste0(tissue_name, "_sig_KO_vs_WT_MGI.csv"),   row.names = FALSE)
   write.csv(sig_DAPA_vs_WT_MGI, paste0(tissue_name, "_sig_DAPA_vs_WT_MGI.csv"), row.names = FALSE)
   write.csv(sig_KO_vs_DAPA_MGI, paste0(tissue_name, "_sig_KO_vs_DAPA_MGI.csv"), row.names = FALSE)
-
-  # Build a global UniProt -> display label lookup for the whole expression matrix
-  # Use MGI symbol where available, fall back to UniProt accession
-  all_ids   <- rownames(df122C)
-  all_res   <- get_mgi_mapping(all_ids, mart)
-  label_map <- ifelse(!is.na(all_res$mgi_vec), all_res$mgi_vec, all_res$clean_ids)
-  names(label_map) <- all_ids
 
   # ── 10. Volcano plots ─────────────────────────────────────────────────────────
   deg_list <- list(KO_vs_WT   = deg_KO_vs_WT,
@@ -331,7 +357,7 @@ run_tissue_analysis <- function(pheno_file,
             sum(df$adj.P.Val < FDR_threshold & df$logFC < -logFC_threshold), " down")
   }
 
-  # ── 11. Heatmaps (with MGI symbol labels, UniProt fallback) ───────────────────
+  # ── 11. Heatmaps (gene name labels, UniProt fallback) ─────────────────────────
   expr_mat <- df122C
   qc_cols  <- grep("Quality_control", colnames(expr_mat), value = TRUE)
   if (length(qc_cols) > 0) expr_mat <- expr_mat[, !colnames(expr_mat) %in% qc_cols, drop = FALSE]
@@ -353,8 +379,9 @@ run_tissue_analysis <- function(pheno_file,
     mat       <- expr_mat[topP, , drop = FALSE]
     col_order <- rownames(pheno1_h)[order(pheno1_h$state)]
 
-    # Replace row names with MGI symbols (UniProt fallback for NAs)
-    rownames(mat) <- label_map[rownames(mat)]
+    # Convert top 10 UniProt IDs to gene names for heatmap labels
+    top_res       <- map_to_symbols(rownames(mat))
+    rownames(mat) <- top_res$symbols
 
     pheatmap::pheatmap(
       t(scale(t(mat[, col_order, drop = FALSE]))),
