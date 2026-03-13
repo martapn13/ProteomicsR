@@ -3,10 +3,13 @@
 #' @description
 #' Runs a full proteomics analysis pipeline for plasma samples, including
 #' filtering, half-minimum imputation, ARSyNseq/TMM normalisation, differential
-#' expression (limma/voom), protein ID mapping, volcano plots, and heatmaps.
+#' expression (limma/voom), MGI symbol annotation, volcano plots, and heatmaps.
 #'
 #' Note: Unlike the tissue pipeline, plasma does not use RUViii-PRPS or SPECU
 #' feature ranking. Half-minimum imputation is the only imputation method applied.
+#' Protein identifiers in the raw file are already MGI symbols, so no additional
+#' conversion is required — the ID mapping step directly annotates results with
+#' MGI gene symbols.
 #'
 #' @param pheno_file Path to the phenotype \code{.txt} file (tab-separated). Must contain
 #'   one row per sample with the following columns:
@@ -31,13 +34,13 @@
 #'     \item Missing values should be coded as 0
 #'   }
 #' @param raw_file Path to the raw plasma \code{.txt} file (tab-separated) used for
-#'   protein ID mapping. The first column contains the actual protein identifiers
-#'   (e.g. gene names) in the same row order as \code{exprs_file}, and is used to
-#'   recover the correct protein names from the positional row labels (e.g. \code{row1}
-#'   maps to row 1 of this file).
-#'   \strong{Note:} this ID mapping step is specific to this dataset, where duplicate
+#'   MGI symbol annotation. The first column contains MGI gene symbols in the same
+#'   row order as \code{exprs_file}, and is used to recover the correct gene symbol
+#'   from the positional row labels (e.g. \code{row1} maps to row 1 of this file).
+#'   \strong{Note:} this annotation step is specific to this dataset, where duplicate
 #'   entries in the proteomics database prevented the use of protein names directly
-#'   as row names in the expression matrix. It may not be needed for other datasets.
+#'   as row names in the expression matrix. Since the raw file already contains MGI
+#'   symbols, no additional UniProt-to-MGI conversion is required for plasma.
 #'
 #' @return Invisibly returns a named list with:
 #' \describe{
@@ -181,38 +184,42 @@ run_plasma_analysis <- function(pheno_file,
   write.csv(sig_DAPA_vs_WT, "sig_DAPA_vs_WT_Plasma.csv", row.names = TRUE)
   write.csv(sig_KO_vs_DAPA, "sig_KO_vs_DAPA_Plasma.csv", row.names = TRUE)
 
-  # ── 8. ID mapping ─────────────────────────────────────────────────────────────
+  # ── 8. MGI symbol annotation ──────────────────────────────────────────────────
+  # Plasma raw file already contains MGI gene symbols. Row numbers from the
+  # expression matrix (e.g. row1 = row 1) are mapped by position to recover
+  # the correct MGI symbol. This step is specific to this dataset where
+  # duplicate entries in the proteomics database caused positional row naming.
   Plasma_raw <- read.table(raw_file, header = TRUE, sep = "\t",
                            check.names = FALSE, stringsAsFactors = FALSE)
   colnames(Plasma_raw)[1] <- "ID"
 
-  add_IDs_exact <- function(sig_df, raw_df, out_prefix = "sig") {
+  add_MGI_symbols <- function(sig_df, raw_df, out_prefix = "sig") {
     rn   <- rownames(sig_df)
     nums <- suppressWarnings(as.numeric(gsub("^row", "", rn, ignore.case = TRUE)))
     if (any(is.na(nums))) {
       warning("Some rownames did not match pattern '^row' and will produce NA indices.")
     }
-    n_raw  <- nrow(raw_df)
-    ID_vec <- rep(NA_character_, length(nums))
-    valid  <- !is.na(nums) & nums >= 1 & nums <= n_raw
-    if (any(valid)) ID_vec[valid] <- raw_df$ID[nums[valid]]
+    n_raw   <- nrow(raw_df)
+    MGI_vec <- rep(NA_character_, length(nums))
+    valid   <- !is.na(nums) & nums >= 1 & nums <= n_raw
+    if (any(valid)) MGI_vec[valid] <- raw_df$ID[nums[valid]]
 
     sig_out <- sig_df
     sig_out$OrigRowName  <- rn
     sig_out$RowNumber    <- nums
     sig_out$RowIndexUsed <- nums
-    sig_out$ID           <- ID_vec
+    sig_out$MGI_symbol   <- MGI_vec
     cols    <- colnames(sig_out)
-    cols    <- c("ID", setdiff(cols, "ID"))
+    cols    <- c("MGI_symbol", setdiff(cols, "MGI_symbol"))
     sig_out <- sig_out[, cols, drop = FALSE]
 
-    matched <- sum(!is.na(ID_vec))
-    total   <- length(ID_vec)
+    matched <- sum(!is.na(MGI_vec))
+    total   <- length(MGI_vec)
     message(sprintf("%s: matched %d / %d (%.1f%%)", out_prefix, matched, total, 100 * matched / total))
 
     if (matched < total) {
-      unmatched_df <- data.frame(OrigRowName = rn[is.na(ID_vec)],
-                                 RowNumber   = nums[is.na(ID_vec)],
+      unmatched_df <- data.frame(OrigRowName = rn[is.na(MGI_vec)],
+                                 RowNumber   = nums[is.na(MGI_vec)],
                                  stringsAsFactors = FALSE)
       write.csv(unmatched_df, paste0("unmatched_rows_", out_prefix, ".csv"), row.names = FALSE)
       message(sprintf("Wrote unmatched rows to: unmatched_rows_%s.csv", out_prefix))
@@ -220,9 +227,9 @@ run_plasma_analysis <- function(pheno_file,
     return(sig_out)
   }
 
-  sig_KO_vs_WT_ID   <- add_IDs_exact(sig_KO_vs_WT,   Plasma_raw, out_prefix = "KO_vs_WT")
-  sig_DAPA_vs_WT_ID <- add_IDs_exact(sig_DAPA_vs_WT, Plasma_raw, out_prefix = "DAPA_vs_WT")
-  sig_KO_vs_DAPA_ID <- add_IDs_exact(sig_KO_vs_DAPA, Plasma_raw, out_prefix = "KO_vs_DAPA")
+  sig_KO_vs_WT_ID   <- add_MGI_symbols(sig_KO_vs_WT,   Plasma_raw, out_prefix = "KO_vs_WT")
+  sig_DAPA_vs_WT_ID <- add_MGI_symbols(sig_DAPA_vs_WT, Plasma_raw, out_prefix = "DAPA_vs_WT")
+  sig_KO_vs_DAPA_ID <- add_MGI_symbols(sig_KO_vs_DAPA, Plasma_raw, out_prefix = "KO_vs_DAPA")
 
   write.csv(sig_KO_vs_WT_ID,   "sig_KO_vs_WT_Plasma_withID.csv",   row.names = FALSE)
   write.csv(sig_DAPA_vs_WT_ID, "sig_DAPA_vs_WT_Plasma_withID.csv", row.names = FALSE)
