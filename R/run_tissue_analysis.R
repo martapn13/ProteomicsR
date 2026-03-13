@@ -1,12 +1,9 @@
 #' @title Multi-Organ Proteomics Analysis Pipeline
 #'
 #' @description
-#' Runs a full proteomics analysis pipeline for a single tissue, including
-#' filtering, half-minimum imputation, batch correction (RUViii-PRPS),
-#' differential expression (limma/voom), QC visualizations (RLE, PCA,
-#' volcano plots, heatmaps), and UniProt-to-MGI symbol conversion via biomaRt.
-#' Row names may be single UniProt accessions (e.g. "Q9JHZ2") or protein groups
-#' with isoforms separated by semicolons (e.g. "O88746;O88746-2"); the first
+#' Runs a full proteomics analysis pipeline for a single tissue, including filtering, half-minimum imputation, batch correction (RUViii-PRPS), 
+#' differential expression (limma/voom), QC visualizations (RLE, PCA, volcano plots, heatmaps), and UniProt-to-MGI symbol conversion via biomaRt.
+#' Row names may be single UniProt accessions (e.g. "Q9JHZ2") or protein groups with isoforms separated by semicolons (e.g. "O88746;O88746-2"); the first
 #' accession in each group is used for MGI symbol mapping.
 #'
 #' @param pheno_file Path to the phenotype \code{.txt} file (tab-separated). Must contain
