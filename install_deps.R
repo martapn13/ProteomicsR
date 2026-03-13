@@ -11,15 +11,13 @@ BiocManager::install(c(
   "RUVSeq",
   "SummarizedExperiment",
   "Biobase",
-  "BiocSingular",
-  "ComplexHeatmap",
-  "BiocParallel",
-  "DelayedArray"
+  "AnnotationDbi",
+  "org.Mm.eg.db",
+  "UniProt.ws"
 ), ask = FALSE)
 
 # CRAN packages
 install.packages(c(
-  "missForest",
   "caret",
   "doParallel",
   "ggplot2",
